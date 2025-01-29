@@ -36,9 +36,7 @@ composer.lock
 /.env
 
 # Ignore specific plugin or theme development directories
-wp-content/plugins/my-custom-plugin/node_modules/
-wp-content/themes/my-custom-theme/node_modules/
-wp-content/themes/my-custom-theme/.sass-cache/
+
 
 # Cache and temporary files
 *.swp
