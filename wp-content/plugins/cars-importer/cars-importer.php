@@ -342,20 +342,3 @@ function prepare_car_data($row) {
     return $cleaned;
 }
 
-/**
- * Usage Example:
- * 
- * $results = import_cars_csv('/path/to/your/cars.csv');
- * if (isset($results['error'])) {
- *     echo "Error: " . $results['error'];
- * } else {
- *     echo "Created: " . $results['created'] . " records\n";
- *     echo "Updated: " . $results['updated'] . " records\n";
- *     if (!empty($results['errors'])) {
- *         echo "Errors occurred:\n";
- *         foreach ($results['errors'] as $error) {
- *             echo "- " . $error . "\n";
- *         }
- *     }
- * }
- */
