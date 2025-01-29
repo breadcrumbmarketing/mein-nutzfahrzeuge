@@ -1,344 +1,201 @@
 <?php
-/**
- * Cars CSV Importer for WordPress
- * 
- * This function imports car data from a CSV file into the wp_cars table
- * If a record exists (matched by VIN or internal number), it updates instead of creating new
- */
-function import_cars_csv($file_path) {
+/*
+Plugin Name: Auto CSV Importer
+Description: Import auto data from CSV into wp_autos table
+Version: 1.0
+Author: Hamy Vosugh
+*/
+
+// Prevent direct access
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+// Register activation hook
+register_activation_hook(__FILE__, 'auto_importer_activate');
+
+function auto_importer_activate() {
     global $wpdb;
-    $table_name = $wpdb->prefix . 'cars';
-    $results = array(
-        'created' => 0,
-        'updated' => 0,
-        'errors' => array()
-    );
-
-    // Check if file exists
-    if (!file_exists($file_path)) {
-        return array('error' => 'File not found: ' . $file_path);
-    }
-
-    // Open CSV file
-    $handle = fopen($file_path, 'r');
-    if (!$handle) {
-        return array('error' => 'Could not open file');
-    }
-
-    // Get headers from first row
-    $headers = fgetcsv($handle);
-    if (!$headers) {
-        fclose($handle);
-        return array('error' => 'Empty or invalid CSV file');
-    }
-
-    // Clean headers (remove BOM if present, trim whitespace)
-    $headers = array_map(function($header) {
-        return trim(str_replace("\xEF\xBB\xBF", '', $header));
-    }, $headers);
-
-    // Begin transaction
-    $wpdb->query('START TRANSACTION');
-
-    try {
-        // Process each row
-        while (($data = fgetcsv($handle, 0, ";", '"', '"')) !== FALSE) {
-            // Skip empty rows
-            if (empty($data) || count($data) < 2) continue;
-            
-            // Create associative array with predefined headers
-            $row = array();
-            foreach ($headers as $index => $header) {
-                $row[$header] = isset($data[$index]) ? trim($data[$index], '" ') : '';
-            
-            // Prepare data for database
-            $cleaned_data = prepare_car_data($row);
-            
-            // Check if record exists (by VIN or internal number)
-            $exists = false;
-            if (!empty($cleaned_data['vin'])) {
-                $exists = $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(*) FROM $table_name WHERE vin = %s",
-                    $cleaned_data['vin']
-                ));
-            } elseif (!empty($cleaned_data['interne_nummer'])) {
-                $exists = $wpdb->get_var($wpdb->prepare(
-                    "SELECT COUNT(*) FROM $table_name WHERE interne_nummer = %s",
-                    $cleaned_data['interne_nummer']
-                ));
-            }
-
-            // Insert or update record
-            if ($exists) {
-                // Update existing record
-                $where = array();
-                if (!empty($cleaned_data['vin'])) {
-                    $where['vin'] = $cleaned_data['vin'];
-                } else {
-                    $where['interne_nummer'] = $cleaned_data['interne_nummer'];
-                }
-                
-                $update_result = $wpdb->update(
-                    $table_name,
-                    $cleaned_data,
-                    $where
-                );
-
-                if ($update_result !== false) {
-                    $results['updated']++;
-                } else {
-                    $results['errors'][] = "Error updating record: " . $wpdb->last_error;
-                }
-            } else {
-                // Insert new record
-                $insert_result = $wpdb->insert(
-                    $table_name,
-                    $cleaned_data
-                );
-
-                if ($insert_result) {
-                    $results['created']++;
-                } else {
-                    $results['errors'][] = "Error inserting record: " . $wpdb->last_error;
-                }
-            }
-        }}
-
-        // If we got here without exceptions, commit the transaction
-        $wpdb->query('COMMIT');
-
-    } catch (Exception $e) {
-        // If anything went wrong, rollback the transaction
-        $wpdb->query('ROLLBACK');
-        $results['errors'][] = "Transaction failed: " . $e->getMessage();
-    }
-
-    fclose($handle);
-    return $results;
-}
-
-/**
- * Prepare car data for database insertion/update
- */
-function prepare_car_data($row) {
-    $cleaned = array();
     
-    // Map and clean each field
-    foreach ($row as $key => $value) {
-        // Skip empty values
-        if ($value === '') {
-            continue;
-        }
-
-        // Clean and format based on field type
-        switch ($key) {
-            case 'preis':
-            case 'haendlerpreis':
-            case 'bruttokreditbetrag':
-            case 'abschlussgebuehren':
-            case 'ratenabsicherung':
-            case 'nettokreditbetrag':
-                $cleaned[$key] = (float) str_replace(array(',', ' '), array('.', ''), $value);
-                break;
-
-            case 'hu':
-            case 'ez':
-            case 'lieferdatum':
-            case 'produktionsdatum':
-                if ($value && $value !== '0000-00-00') {
-                    $date = date_create_from_format('Y-m-d', $value);
-                    if ($date) {
-                        $cleaned[$key] = $date->format('Y-m-d');
-                    }
-                }
-                break;
-
-            case 'leistung':
-            case 'kilometer':
-            case 'ccm':
-            case 'tragkraft':
-            case 'nutzlast':
-            case 'gesamtgewicht':
-            case 'hubhoehe':
-            case 'bauhoehe':
-            case 'baujahr':
-            case 'betriebsstunden':
-            case 'sitze':
-            case 'achsen':
-            case 'emission':
-            case 'lieferfrist':
-            case 'ueberfuehrungskosten':
-            case 'hsn':
-            case 'vorbesitzer':
-            case 'fahrzeuglaenge':
-            case 'fahrzeugbreite':
-            case 'fahrzeughoehe':
-            case 'laderaum_europalette':
-            case 'laderaum_volumen':
-            case 'laderaum_laenge':
-            case 'laderaum_breite':
-            case 'laderaum_hoehe':
-            case 'monatliche_rate':
-            case 'laufzeit':
-            case 'anzahlung':
-            case 'schlussrate':
-            case 'schlafplaetze':
-                $cleaned[$key] = (int) $value;
-                break;
-
-            case 'soll_zinssatz':
-            case 'effektiver_jahreszins':
-            case 'verbrauch_innerorts':
-            case 'verbrauch_ausserorts':
-            case 'verbrauch_kombiniert':
-            case 'kombinierter_stromverbrauch':
-            case 'mwstsatz':
-                $cleaned[$key] = (float) str_replace(array(',', ' '), array('.', ''), $value);
-                break;
-
-            case 'mwst':
-            case 'oldtimer':
-            case 'beschaedigtes_fahrzeug':
-            case 'klima':
-            case 'taxi':
-            case 'behindertengerecht':
-            case 'jahreswagen':
-            case 'neufahrzeug':
-            case 'unsere_empfehlung':
-            case 'metallic':
-            case 'garantie':
-            case 'leichtmetallfelgen':
-            case 'esp':
-            case 'abs':
-            case 'anhaengerkupplung':
-            case 'wegfahrsperre':
-            case 'navigationsystem':
-            case 'schiebedach':
-            case 'zentralverriegelung':
-            case 'fensterheber':
-            case 'allradantrieb':
-            case 'umweltplakette':
-            case 'servolenkung':
-            case 'biodiesel':
-            case 'scheckheftgepflegt':
-            case 'katalysator':
-            case 'kickstarter':
-            case 'estarter':
-            case 'vorfuehrfahrzeug':
-            case 'antrieb':
-            case 'schadstoff':
-            case 'kabinenart':
-            case 'tempomat':
-            case 'standheizung':
-            case 'kabine':
-            case 'schutzdach':
-            case 'vollverkleidung':
-            case 'komunal':
-            case 'kran':
-            case 'retarder_intarder':
-            case 'schlafplatz':
-            case 'tv':
-            case 'wc':
-            case 'ladebordwand':
-            case 'hydraulikanlage':
-            case 'schiebetuer':
-            case 'radformel':
-            case 'trennwand':
-            case 'ebs':
-            case 'vermietbar':
-            case 'kompressor':
-            case 'luftfederung':
-            case 'scheibenbremse':
-            case 'fronthydraulik':
-            case 'bss':
-            case 'schnellwechsel':
-            case 'zsa':
-            case 'kueche':
-            case 'kuehlbox':
-            case 'schlafsitze':
-            case 'frontheber':
-            case 'sichtbar_nur_fuer_Haendler':
-            case 'reserviert_5':
-            case 'envkv':
-            case 'xenonscheinwerfer':
-            case 'sitzheizung':
-            case 'partikelfilter':
-            case 'einparkhilfe':
-            case 'hu_au_neu':
-            case 'kraftstoffart':
-            case 'getriebeart':
-            case 'exportfahrzeug':
-            case 'tageszulassung':
-            case 'blickfaenger':
-            case 'seite_1_inserat':
-            case 'e10':
-            case 'pflanzenoel':
-            case 'scr':
-            case 'koffer':
-            case 'sturzbuegel':
-            case 'scheibe':
-            case 'standklima':
-            case 's_s_bereifung':
-            case 'strassenzulassung':
-            case 'etagenbett':
-            case 'festbett':
-            case 'heckgarage':
-            case 'markise':
-            case 'sep_dusche':
-            case 'solaranlage':
-            case 'mittelsitzgruppe':
-            case 'rundsitzgruppe':
-            case 'seitensitzgruppe':
-            case 'hagelschaden':
-            case 'inserat_als_neu_markieren':
-            case 'finanzierungsfeature':
-            case 'interieurfarbe':
-            case 'interieurtyp':
-            case 'airbag':
-            case 'top_inserat':
-            case 'art_des_soll_zinssatzes':
-            case 'elektrische_seitenspiegel':
-            case 'sportfahrwerk':
-            case 'sportpaket':
-            case 'bluetooth':
-            case 'bordcomputer':
-            case 'cd_spieler':
-            case 'elektrische_sitzeinstellung':
-            case 'head_up_display':
-            case 'freisprecheinrichtung':
-            case 'mp3_schnittstelle':
-            case 'multifunktionslenkrad':
-            case 'skisack':
-            case 'tuner_oder_radio':
-            case 'sportsitze':
-            case 'panorama_dach':
-            case 'kindersitzbefestigung':
-            case 'kurvenlicht':
-            case 'lichtsensor':
-            case 'nebelscheinwerfer':
-            case 'tagfahrlicht':
-            case 'traktionskontrolle':
-            case 'start_stop_automatik':
-            case 'regensensor':
-            case 'nichtraucher_fahrzeug':
-            case 'dachreling':
-            case 'unfallfahrzeug':
-            case 'fahrtauglich':
-            case 'einparkhilfe_sensoren_vorne':
-            case 'einparkhilfe_sensoren_hinten':
-            case 'einparkhilfe_kamera':
-            case 'einparkhilfe_selbstlenkendes_system':
-            case 'rotstiftpreis':
-            case 'kleinanzeigen_export':
-            case 'plugin_hybrid':
-                $cleaned[$key] = in_array(strtolower($value), array('1', 'yes', 'true', 'j', 'y')) ? '1' : '0';
-                break;
-
-            default:
-                $cleaned[$key] = $value;
-        }
-    }
-
-    return $cleaned;
+    $charset_collate = $wpdb->get_charset_collate();
+    
+    // Create table if it doesn't exist
+    $sql = "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}autos (
+        `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+        `category_id` bigint(20) UNSIGNED DEFAULT NULL,
+        `category_name` varchar(255) DEFAULT NULL,
+        `body_type` varchar(100) DEFAULT NULL,
+        `manufacturer` varchar(100) DEFAULT NULL,
+        `model` varchar(100) DEFAULT NULL,
+        `power_kw` int(11) DEFAULT NULL,
+        `vin` varchar(50) DEFAULT NULL,
+        `color` varchar(50) DEFAULT NULL,
+        `condition_id` tinyint(4) DEFAULT NULL,
+        `description` text DEFAULT NULL,
+        `status` tinyint(4) DEFAULT NULL,
+        `currency` varchar(10) DEFAULT NULL,
+        `vat_rate` decimal(5,2) DEFAULT NULL,
+        `featured` tinyint(1) DEFAULT '0',
+        `sold` tinyint(1) DEFAULT '0',
+        `price` decimal(10,2) DEFAULT NULL,
+        `vat_amount` decimal(10,2) DEFAULT NULL,
+        `power_hp` int(11) DEFAULT NULL,
+        `net_price` decimal(10,2) DEFAULT NULL,
+        `finance_bank` varchar(100) DEFAULT NULL,
+        `finance_rate` decimal(4,2) DEFAULT NULL,
+        `country_code` varchar(2) DEFAULT NULL,
+        `video_url` varchar(255) DEFAULT NULL,
+        `energy_rating` varchar(5) DEFAULT NULL,
+        `fuel_type` varchar(50) DEFAULT NULL,
+        `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+        `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (`id`)
+    ) $charset_collate;";
+    
+    require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    dbDelta($sql);
 }
 
+// Add menu item to WordPress admin
+add_action('admin_menu', 'auto_importer_menu');
+
+function auto_importer_menu() {
+    add_menu_page(
+        'Auto Importer',
+        'Auto Importer',
+        'manage_options',
+        'auto-importer',
+        'auto_importer_page'
+    );
+}
+
+// Create the admin page
+function auto_importer_page() {
+    ?>
+    <div class="wrap">
+        <h2>Auto CSV Importer</h2>
+        <form method="post" enctype="multipart/form-data" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+            <input type="hidden" name="action" value="import_autos_csv" />
+            <?php wp_nonce_field('import_autos_csv', 'auto_importer_nonce'); ?>
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><label for="csv_file">Select CSV File</label></th>
+                    <td><input type="file" name="csv_file" id="csv_file" accept=".csv" required /></td>
+                </tr>
+            </table>
+            <?php submit_button('Import CSV'); ?>
+        </form>
+    </div>
+    <?php
+}
+
+// Handle the CSV import
+add_action('admin_post_import_autos_csv', 'handle_csv_import');
+
+function handle_csv_import() {
+    if (!current_user_can('manage_options')) {
+        wp_die('Unauthorized access');
+    }
+
+    check_admin_referer('import_autos_csv', 'auto_importer_nonce');
+
+    if (!isset($_FILES['csv_file'])) {
+        wp_redirect(admin_url('admin.php?page=auto-importer&error=nofile'));
+        exit;
+    }
+
+    $file = $_FILES['csv_file'];
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        wp_redirect(admin_url('admin.php?page=auto-importer&error=upload'));
+        exit;
+    }
+
+    global $wpdb;
+    $handle = fopen($file['tmp_name'], 'r');
+    $imported = 0;
+
+    while (($data = fgetcsv($handle, 0, ';')) !== FALSE) {
+        // Skip empty rows
+        if (empty($data[0])) continue;
+
+        $wpdb->insert(
+            $wpdb->prefix . 'autos',
+            array(
+                'category_id' => $data[0],
+                'category_name' => $data[1],
+                'body_type' => $data[2],
+                'manufacturer' => $data[3],
+                'model' => $data[4],
+                'power_kw' => $data[5],
+                'color' => $data[16],
+                'description' => $data[20],
+                'price' => $data[107],
+                'vat_rate' => $data[23],
+                // Add more fields as needed
+            ),
+            array(
+                '%d', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%f', '%f'
+            )
+        );
+        $imported++;
+    }
+    fclose($handle);
+
+    wp_redirect(admin_url('admin.php?page=auto-importer&imported=' . $imported));
+    exit;
+}
+
+// Register shortcode for frontend upload form
+add_shortcode('auto_csv_upload', 'auto_csv_upload_shortcode');
+
+function auto_csv_upload_shortcode() {
+    if (!current_user_can('manage_options')) {
+        return 'Unauthorized access';
+    }
+
+    ob_start();
+    ?>
+    <div class="auto-csv-upload-form">
+        <form method="post" enctype="multipart/form-data" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+            <input type="hidden" name="action" value="import_autos_csv" />
+            <?php wp_nonce_field('import_autos_csv', 'auto_importer_nonce'); ?>
+            
+            <div class="form-group">
+                <label for="csv_file">Select CSV File:</label>
+                <input type="file" name="csv_file" id="csv_file" accept=".csv" required />
+            </div>
+            
+            <div class="form-group">
+                <input type="submit" value="Import CSV" class="button button-primary" />
+            </div>
+        </form>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+
+// Add some basic styles
+add_action('wp_head', 'auto_importer_styles');
+
+function auto_importer_styles() {
+    ?>
+    <style>
+        .auto-csv-upload-form {
+            max-width: 500px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .auto-csv-upload-form .form-group {
+            margin-bottom: 15px;
+        }
+        .auto-csv-upload-form label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+    </style>
+    <?php
+}
